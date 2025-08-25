@@ -1,7 +1,7 @@
 # WS‑MIDI Bridge — Proyecto completo (Web + Servidor)
 
 Controlá tu DAW desde un dashboard web. Estructura:
-- `/web` — UI (copiada de tu proyecto)
+- `/web` — UI 
 - `/server` — puente WebSocket ⇄ MIDI
 
 ## Cómo correr
