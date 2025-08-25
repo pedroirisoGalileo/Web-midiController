@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Generador de Entornos MIDI</title>
+<style>
+  :root{--bg:#0d0d0f;--panel:#121217;--fg:#e8e8ee;--muted:#a6a6b0;--line:#242433;--accent:#4aa3ff;--ok:#11c46a;--err:#d34747}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;flex-direction:column}
+
+  header{position:sticky;top:0;z-index:10;background:linear-gradient(#0b0b10,#0b0b10f0);border-bottom:1px solid var(--line);padding:10px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .kv{display:flex;gap:8px;align-items:center;background:var(--panel);border:1px solid var(--line);padding:8px 10px;border-radius:10px}
+  label{color:var(--muted);font-size:12px}
+  select,input[type=text],input[type=number]{background:#0c0c12;color:var(--fg);border:1px solid #2a2a3a;border-radius:8px;padding:6px 8px}
+  button{background:#161621;border:1px solid #2a2a3a;color:var(--fg);border-radius:10px;padding:8px 10px;cursor:pointer}
+  button:hover{border-color:#3a3a4a}
+  .chip{background:#10101a;border:1px solid #24243a;border-radius:999px;padding:6px 10px;color:#c9c9d6}
+  .led{width:10px;height:10px;border-radius:50%;display:inline-block;border:1px solid #222;margin-right:6px;background:#444}
+  .led.on{background:var(--ok);box-shadow:0 0 10px 2px #11c46a80}
+  .led.off{background:var(--err);box-shadow:0 0 0 0 #0000}
+
+  main{flex:1;display:grid;grid-template-columns:260px 1fr;gap:12px;padding:12px}
+  aside, .canvas{background:var(--panel);border:1px solid var(--line);border-radius:12px;min-height:200px}
+  aside{padding:12px;display:flex;flex-direction:column;gap:10px}
+  .palette button{width:100%;text-align:left}
+  .hr{height:1px;background:var(--line);margin:8px 0}
+  .small{font-size:12px;color:var(--muted)}
+
+  .canvas{padding:12px;display:grid;grid-template-columns:repeat(12,1fr);gap:10px;align-content:start}
+  .item{grid-column:span 3;min-height:70px;background:#0e0e16;border:1px solid #23233a;border-radius:12px;position:relative;padding:8px;display:flex;flex-direction:column;gap:8px}
+  .item.dragging{opacity:.6;outline:2px dashed #666}
+  .item.locked{border-color:#3a3a55; background:linear-gradient(#0e0e16,#0e0e16) padding-box, linear-gradient(120deg,#3a3a55,#2a2a40) border-box;}
+  .handle{position:absolute;right:8px;top:6px;cursor:grab;color:#aaa;font-size:16px;user-select:none}
+  .title{font-size:12px;color:#c7c7d7}
+  .gridcols{position:absolute;left:8px;top:6px;display:flex;gap:6px;align-items:center}
+  .gridcols input{width:48px}
+
+  .ctrl-body{display:flex;gap:8px;align-items:center;justify-content:space-between}
+  .btn{padding:10px 12px;border-radius:10px;border:1px solid #34344a;background:#161623;min-width:80px;text-align:center}
+  .btn.toggle.on{background:#fff;color:#000;border-color:#e2e2e2}
+  .btn.momentary.active{background:#ffd400;color:#000;border-color:#e1c000}
+  .knob{flex:1;background:#0f0f19;border:1px solid #202038;border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px;align-items:center}
+  .knob label{font-size:12px;color:#9aa}
+  input[type=range]{width:100%;height:28px;background:transparent}
+  input[type=range]::-webkit-slider-runnable-track{height:8px;border-radius:999px;border:1px solid #333;background:var(--slider-color,#00c853)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;border:1px solid #ddd;margin-top:-5px}
+  input[type=range]::-moz-range-track{height:8px;border-radius:999px;border:1px solid #333;background:var(--slider-color,#00c853)}
+  input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:#fff;border:1px solid #ddd}
+
+  .toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .toolbar button{padding:6px 8px}
+  .lock-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid #2a2a3a;border-radius:8px;background:#161621}
+  .lock-chip input{accent-color:#4aa3ff}
+
+  /* Modal */
+  .modal{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center}
+  .modal.open{display:flex}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;min-width:320px;max-width:92vw}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .grid .full{grid-column:1/-1}
+  .warn{color:#ffcc66}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <div class="kv">
+      <label>Transporte</label>
+      <select id="transport">
+        <option value="webmidi">WebMIDI (local)</option>
+        <option value="ws">WebSocket (remoto)</option>
+      </select>
+    </div>
+    <div class="kv" id="kvOut"><label>Salida MIDI</label><select id="out"></select></div>
+    <div class="kv" id="kvWs" style="display:none"><label>WS URL</label><input id="wsUrl" type="text" value="ws://192.168.1.34:8080" style="min-width:220px"></div>
+    <div class="kv"><label>Canal</label><input id="chan" type="number" min="1" max="16" value="1" style="width:70px"></div>
+    <div class="kv"><span class="led off" id="led"></span><span id="readyTxt" class="small">NOT READY</span></div>
+    <div class="kv"><span id="tx" class="chip">TX: 0</span></div>
+    <div class="kv"><span id="ack" class="chip">ACK: 0</span></div>
+    <div class="kv"><span id="err" class="chip">ERR: 0</span></div>
+
+    <!-- NUEVO: Gestión de presets -->
+    <div class="kv" id="kvPreset">
+      <label>Preset</label>
+      <select id="presetList" style="min-width:160px"></select>
+      <label>Nombre</label>
+      <input id="presetName" type="text" placeholder="nuevo…" style="min-width:140px">
+      <button id="presetLoad">Cargar</button>
+      <button id="presetSaveAs">Guardar como</button>
+      <button id="presetDelete" title="Eliminar preset">🗑</button>
+      <button id="presetExport" title="Exportar a archivo">Exportar</button>
+      <input type="file" id="presetImportFile" accept="application/json" style="display:none">
+      <button id="presetImport" title="Importar desde archivo">Importar</button>
+    </div>
+
+    <div class="kv"><button id="clear">Vaciar lienzo</button></div>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <div class="palette">
+      <button id="addBtn">➕ Botón</button>
+      <button id="addSld">➕ Slider</button>
+      <div class="hr"></div>
+      <div class="small">Auto-asigna CC en rango <b>102–119</b> (canal actual) para no disparar sonidos.<br/>Podés abrir cada control y poner un mensaje puntual.</div>
+      <div class="hr"></div>
+      <div class="small">El candado 🔒 bloquea solo la posición/tamaño del control (layout). La funcionalidad MIDI sigue activa.</div>
+    </div>
+  </aside>
+
+  <section class="canvas" id="canvas"></section>
+</main>
+
+<!-- Modal de propiedades -->
+<div class="modal" id="modal">
+  <div class="card">
+    <h3 style="margin:0 0 8px">Propiedades del control</h3>
+    <div class="grid">
+      <div><label>Etiqueta</label><input id="mLabel" type="text"></div>
+      <div><label>Grupo</label><input id="mGroup" type="text" placeholder="(opcional)"></div>
+
+      <div class="full"><div class="hr"></div></div>
+      <div><label>Tipo de control</label>
+        <select id="mCtrlType">
+          <option value="button">Botón</option>
+          <option value="slider">Slider</option>
+        </select>
+      </div>
+      <div id="mBtnModeWrap"><label>Modo de botón</label>
+        <select id="mBtnMode">
+          <option value="toggle">Toggle</option>
+          <option value="momentary">Momentary</option>
+        </select>
+      </div>
+
+      <div class="full"><div class="hr"></div></div>
+      <div><label>Mensaje MIDI</label>
+        <select id="mMsgMode">
+          <option value="auto">Auto (CC 102–119)</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <div><label>Canal</label><input id="mCh" type="number" min="1" max="16"></div>
+
+      <div id="mCustomRow1"><label>Tipo</label>
+        <select id="mType">
+          <option value="cc">CC (Control Change)</option>
+          <option value="pc">Program Change</option>
+          <option value="note">Note (On/Off)</option>
+        </select>
+      </div>
+      <div id="mCustomRow2"><label>Número / Nota</label><input id="mNum" type="number" min="0" max="127"></div>
+
+      <div id="mValLoWrap"><label>Valor min</label><input id="mValLo" type="number" min="0" max="127"></div>
+      <div id="mValHiWrap"><label>Valor max</label><input id="mValHi" type="number" min="0" max="127"></div>
+
+      <div class="full"><div class="hr"></div></div>
+      <div class="full small warn">Nota: “Note” puede generar sonido. Usalo sólo si realmente querés enviar notas. Para control, preferí CC.</div>
+
+      <div class="full" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+        <button id="mDel" style="background:#261417;border-color:#40202a">Eliminar</button>
+        <button id="mCancel">Cancelar</button>
+        <button id="mOk" style="background:#19301e;border-color:#224428">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ========= UTIL & ESTADO GLOBAL ========= */
+const led = document.getElementById('led'), readyTxt=document.getElementById('readyTxt');
+const txEl=document.getElementById('tx'), ackEl=document.getElementById('ack'), errEl=document.getElementById('err');
+let TX=0,RX=0,ERR=0; const bumpTx=()=>txEl.textContent='TX: '+(++TX); const bumpAck=()=>ackEl.textContent='ACK: '+(++RX); const bumpErr=()=>errEl.textContent='ERR: '+(++ERR);
+function setReady(ok, src){ led.classList.toggle('on',ok); led.classList.toggle('off',!ok); readyTxt.textContent=(src?src+': ':'') + (ok?'READY':'NOT READY'); }
+function ch(){ return +document.getElementById('chan').value||1; }
+
+/* ========= TRANSPORTE (WebMIDI / WS) ========= */
+const selTransport=document.getElementById('transport'), kvOut=document.getElementById('kvOut'), kvWs=document.getElementById('kvWs'), wsUrlI=document.getElementById('wsUrl'), outSel=document.getElementById('out');
+
+class Transport{ async init(){} teardown(){} isReady(){return false} name(){return 'Transport'} send(obj){} }
+class WebMIDITransport extends Transport{
+  constructor(){ super(); this.midi=null; this.output=null; this.onstate=this.onstate.bind(this); }
+  async init(){ try{ this.midi=await navigator.requestMIDIAccess({sysex:false}); this.midi.onstatechange=this.onstate; this.populate(); setReady(!!this.output,'WebMIDI'); }catch(e){ setReady(false,'WebMIDI'); } }
+  teardown(){ if(this.midi) this.midi.onstatechange=null; this.midi=null; this.output=null; setReady(false,'WebMIDI'); }
+  onstate(){ this.populate(); }
+  populate(){ const prev=outSel.value; outSel.innerHTML=''; if(!this.midi) return;
+    this.midi.outputs.forEach(o=>{ const opt=document.createElement('option'); opt.value=o.id; opt.textContent=`${o.name}`; outSel.appendChild(opt); });
+    const prefer=[...this.midi.outputs.values()].find(o=>/IAC|Network|LoopMIDI/i.test(o.name));
+    if(prefer) outSel.value=prefer.id; else if(prev) outSel.value=prev;
+    this.output=this.midi.outputs.get(outSel.value)||null; setReady(!!this.output,'WebMIDI');
+  }
+  send(obj){
+    if(!this.output) return;
+    const c=((obj.ch??ch())-1)&0x0F;
+    if(obj.type==='cc') this.output.send([0xB0|c, obj.cc&0x7F, obj.val&0x7F]);
+    else if(obj.type==='pc') this.output.send([0xC0|c, obj.val&0x7F]);
+    else if(obj.type==='noteon'||obj.type==='noteoff'){ const on=obj.type==='noteon'; this.output.send([(on?0x90:0x80)|c, obj.note&0x7F, on?(obj.vel??100)&0x7F:0]); }
+    bumpTx();
+  }
+  name(){return 'WebMIDI'}
+}
+class WSTransport extends Transport{
+  constructor(url){ super(); this.url=url; this.ws=null; this.ready=false; }
+  async init(){ this.ws=new WebSocket(this.url);
+    this.ws.onopen=()=>{ this.ready=true; setReady(true,'WebSocket'); };
+    this.ws.onclose=()=>{ this.ready=false; setReady(false,'WebSocket'); };
+    this.ws.onerror=()=>{ this.ready=false; setReady(false,'WebSocket'); };
+    this.ws.onmessage=(ev)=>{ try{ const m=JSON.parse(ev.data); if(m.type==='ack'){ m.ok?bumpAck():bumpErr(); } }catch{} };
+  }
+  teardown(){ try{ this.ws?.close(); }catch{} this.ready=false; setReady(false,'WebSocket'); }
+  isReady(){ return this.ready; }
+  send(obj){ if(this.ready) { this.ws.send(JSON.stringify(obj)); bumpTx(); } }
+  name(){return 'WebSocket'}
+}
+let transport=null;
+async function switchTransport(mode){
+  localStorage.setItem('mb_mode', mode);
+  kvOut.style.display = mode==='webmidi' ? '' : 'none';
+  kvWs.style.display  = mode==='ws' ? '' : 'none';
+  if(transport) transport.teardown();
+  if(mode==='webmidi'){ transport=new WebMIDITransport(); await transport.init(); }
+  else { const url=wsUrlI.value.trim(); localStorage.setItem('mb_ws',url); transport=new WSTransport(url); await transport.init(); }
+}
+selTransport.onchange=()=>switchTransport(selTransport.value);
+outSel.onchange=()=>{ if(transport instanceof WebMIDITransport) transport.populate(); }
+wsUrlI.onchange=()=>{ if(selTransport.value==='ws') switchTransport('ws'); }
+
+/* ========= ALLOCATOR CC “SEGURO” (102–119) ========= */
+const SAFE_CC_START=102, SAFE_CC_END=119;
+let nextCC=SAFE_CC_START;
+function allocCC(){ const cc=nextCC; nextCC++; if(nextCC>SAFE_CC_END) nextCC=SAFE_CC_START; return cc; }
+
+/* ========= MODELO ========= */
+const canvas=document.getElementById('canvas');
+let model=[]; // array de items
+
+/* ========= PRESETS (múltiples + export/import) ========= */
+const presetList = document.getElementById('presetList');
+const presetNameI = document.getElementById('presetName');
+const btnLoad = document.getElementById('presetLoad');
+const btnSaveAs = document.getElementById('presetSaveAs');
+const btnDelete = document.getElementById('presetDelete');
+const btnExport = document.getElementById('presetExport');
+const btnImport = document.getElementById('presetImport');
+const fileImport = document.getElementById('presetImportFile');
+
+const LS_PRESETS_KEY = 'mb_presets_v2';
+const LS_ACTIVE_KEY = 'mb_active_preset';
+
+function nowIso(){ return new Date().toISOString(); }
+function serializeState(){
+  return {
+    version: 2,
+    createdAt: nowIso(),
+    model,
+    nextCC,
+    mode: selTransport.value,
+    ws: wsUrlI.value
+  };
+}
+function applyPreset(p){
+  if(!p) return;
+  model = Array.isArray(p.model) ? p.model : [];
+  nextCC = (typeof p.nextCC==='number') ? p.nextCC : SAFE_CC_START;
+  selTransport.value = p.mode || 'webmidi';
+  wsUrlI.value = p.ws || wsUrlI.value;
+  render();
+  switchTransport(selTransport.value);
+}
+function getPresets(){
+  try{ return JSON.parse(localStorage.getItem(LS_PRESETS_KEY)) || {}; }catch{ return {}; }
+}
+function setPresets(obj){
+  localStorage.setItem(LS_PRESETS_KEY, JSON.stringify(obj));
+}
+function refreshPresetList(selectName){
+  const presets = getPresets();
+  const names = Object.keys(presets).sort((a,b)=>a.localeCompare(b,'es'));
+  presetList.innerHTML = names.map(n=>`<option value="${n}">${n}</option>`).join('');
+  if(selectName && presets[selectName]) presetList.value = selectName;
+  else if(localStorage.getItem(LS_ACTIVE_KEY) && presets[localStorage.getItem(LS_ACTIVE_KEY)]){
+    presetList.value = localStorage.getItem(LS_ACTIVE_KEY);
+  }
+}
+function uniqueName(base){
+  const presets = getPresets();
+  let name = base || 'Preset';
+  if(!presets[name]) return name;
+  let i=2;
+  while(presets[`${name} (${i})`]) i++;
+  return `${name} (${i})`;
+}
+btnSaveAs.onclick = ()=>{
+  const raw = (presetNameI.value||'').trim();
+  if(!raw){ alert('Poné un nombre para el preset.'); return; }
+  const name = uniqueName(raw);
+  const presets = getPresets();
+  presets[name] = serializeState();
+  setPresets(presets);
+  localStorage.setItem(LS_ACTIVE_KEY, name);
+  refreshPresetList(name);
+};
+btnLoad.onclick = ()=>{
+  const name = presetList.value;
+  const presets = getPresets();
+  if(!presets[name]){ alert('Preset no encontrado.'); return; }
+  localStorage.setItem(LS_ACTIVE_KEY, name);
+  applyPreset(presets[name]);
+};
+btnDelete.onclick = ()=>{
+  const name = presetList.value;
+  if(!name) return;
+  if(!confirm(`Eliminar el preset “${name}”?`)) return;
+  const presets = getPresets();
+  delete presets[name];
+  setPresets(presets);
+  if(localStorage.getItem(LS_ACTIVE_KEY)===name) localStorage.removeItem(LS_ACTIVE_KEY);
+  refreshPresetList();
+};
+btnExport.onclick = ()=>{
+  // exporta el seleccionado o, si no hay, el estado actual
+  const nameSel = presetList.value || (presetNameI.value.trim() || 'preset');
+  const data = (getPresets()[nameSel]) ? getPresets()[nameSel] : serializeState();
+  const payload = { kind:'midi-builder-preset', name:nameSel, ...data };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  const ts = new Date().toISOString().replace(/[:.]/g,'-');
+  a.href = URL.createObjectURL(blob);
+  a.download = `preset-${nameSel}-${ts}.json`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+};
+btnImport.onclick = ()=> fileImport.click();
+fileImport.onchange = (ev)=>{
+  const file = ev.target.files?.[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try{
+      const obj = JSON.parse(reader.result);
+      const presets = getPresets();
+      const base = (obj && obj.name) ? String(obj.name) : String(file.name).replace(/\.json$/i,'');
+      const name = uniqueName(base);
+      const data = obj && obj.kind==='midi-builder-preset' ? obj : { ...obj };
+      // normalizamos campos esperados
+      const normalized = {
+        version: 2,
+        createdAt: nowIso(),
+        model: data.model || [],
+        nextCC: typeof data.nextCC==='number'? data.nextCC : SAFE_CC_START,
+        mode: data.mode || 'webmidi',
+        ws: data.ws || ''
+      };
+      presets[name] = normalized;
+      setPresets(presets);
+      localStorage.setItem(LS_ACTIVE_KEY, name);
+      refreshPresetList(name);
+      applyPreset(normalized);
+      alert(`Importado como “${name}”.`);
+    }catch(e){
+      alert('Archivo inválido o corrupto.');
+    }finally{
+      fileImport.value='';
+    }
+  };
+  reader.readAsText(file);
+};
+
+/* ========= PERSISTENCIA RÁPIDA (Vaciar lienzo) ========= */
+document.getElementById('clear').onclick=()=>{ if(confirm('¿Vaciar lienzo?')){ model=[]; render(); } };
+
+/* ========= CREACIÓN DE ITEMS ========= */
+function addButton(){
+  const id=crypto.randomUUID();
+  model.push({
+    id, kind:'button', label:'BUTTON', group:'',
+    mode:'toggle',  // toggle | momentary
+    msgMode:'auto', // auto | custom
+    ch: ch(),
+    type:'cc', num: allocCC(), valLo:0, valHi:127,
+    span:3,
+    // Estado del botón
+    state:false,
+    // Bloqueo SOLO de posición/layout
+    locked:false
+  });
+  render();
+}
+function addSlider(){
+  const id=crypto.randomUUID();
+  model.push({
+    id, kind:'slider', label:'SLIDER', group:'',
+    msgMode:'auto', ch: ch(), type:'cc', num: allocCC(), valLo:0, valHi:127,
+    span:3, value:64,
+    locked:false
+  });
+  render();
+}
+document.getElementById('addBtn').onclick=addButton;
+document.getElementById('addSld').onclick=addSlider;
+
+/* ========= RENDER ========= */
+function colorFromValue(v){ const t=v/127; if(t<=.5){ const k=t/.5; return `rgb(${30*(1-k)+0*k},${144*(1-k)+200*k},${255*(1-k)+83*k})`; } else { const k=(t-.5)/.5; return `rgb(${0*(1-k)+255*k},${200*(1-k)+23*k},${83*(1-k)+68*k})`; } }
+
+function render(){
+  canvas.innerHTML='';
+  model.forEach(item=>{
+    const el=document.createElement('div'); el.className='item'; el.dataset.id=item.id; el.draggable=!item.locked; el.style.gridColumn=`span ${item.span||3}`;
+    if(item.locked) el.classList.add('locked');
+
+    // encabezado
+    const title=document.createElement('div'); title.className='title'; title.textContent=(item.group?`[${item.group}] `:'')+item.label;
+    const handle=document.createElement('div'); handle.className='handle'; handle.textContent='⠿'; handle.title='Arrastrar';
+    const gridcols=document.createElement('div'); gridcols.className='gridcols';
+    const cols=document.createElement('input'); cols.type='number'; cols.min=1; cols.max=12; cols.value=item.span||3; cols.title='Columnas';
+    cols.onchange=()=>{ item.span=Math.max(1,Math.min(12,+cols.value||3)); render(); };
+    cols.disabled = item.locked; // layout lock
+    gridcols.appendChild(cols);
+
+    // cuerpo del control
+    const body=document.createElement('div'); body.className='ctrl-body';
+    if(item.kind==='button'){
+      const btn=document.createElement('div');
+      btn.className='btn '+item.mode;
+      if(item.mode==='toggle' && item.state) btn.classList.add('on');
+      btn.textContent=item.label;
+
+      // funcionalidad SIEMPRE activa
+      btn.onpointerdown=(e)=>{
+        if(item.mode==='momentary'){ btn.classList.add('active'); sendControl(item,true); }
+      };
+      btn.onpointerup=(e)=>{
+        if(item.mode==='momentary'){ btn.classList.remove('active'); sendControl(item,false); }
+      };
+      btn.onclick=()=>{
+        if(item.mode==='toggle'){
+          const nowOn=!btn.classList.contains('on');
+          btn.classList.toggle('on', nowOn);
+          item.state = nowOn;
+          sendControl(item, nowOn);
+        }
+      };
+      body.appendChild(btn);
+    }else{
+      const k=document.createElement('div'); k.className='knob';
+      const lab=document.createElement('label'); lab.textContent=item.label;
+      const range=document.createElement('input'); range.type='range'; range.min=0; range.max=127;
+      const effectiveVal = (typeof item.value==='number') ? item.value : 64;
+      range.value = effectiveVal;
+      const upd=()=>{ const col=colorFromValue(+range.value); range.style.setProperty('--slider-color', col); };
+      upd();
+      range.oninput=()=>{
+        item.value=+range.value; sendControl(item,range.value); upd();
+      };
+      k.appendChild(lab); k.appendChild(range); body.appendChild(k);
+    }
+
+    // toolbar
+    const tb=document.createElement('div'); tb.className='toolbar';
+
+    // lock layout
+    const lockWrap=document.createElement('label'); lockWrap.className='lock-chip'; lockWrap.title='Bloquea solo la posición/tamaño (el control sigue funcionando)';
+    const lockCb=document.createElement('input'); lockCb.type='checkbox'; lockCb.checked=item.locked;
+    const lockTxt=document.createElement('span'); lockTxt.textContent='🔒 Bloq.';
+    lockCb.onchange=()=>{ item.locked = lockCb.checked; render(); };
+    lockWrap.appendChild(lockCb); lockWrap.appendChild(lockTxt);
+
+    const edit=document.createElement('button'); edit.textContent='Editar'; edit.onclick=()=>openModal(item.id);
+    const del=document.createElement('button'); del.textContent='Borrar'; del.onclick=()=>{ model=model.filter(x=>x.id!==item.id); render(); };
+
+    tb.appendChild(lockWrap);
+    tb.appendChild(edit); tb.appendChild(del);
+
+    el.appendChild(gridcols); el.appendChild(handle); el.appendChild(title); el.appendChild(body); el.appendChild(tb);
+    canvas.appendChild(el);
+  });
+  wireDnD();
+}
+
+/* ========= DnD ORDEN ========= */
+function wireDnD(){
+  let dragging = null;
+  canvas.querySelectorAll('.item').forEach(el => {
+    el.addEventListener('dragstart', ev => {
+      if (el.classList.contains('locked')) { ev.preventDefault(); return; }
+      const isInteractive = ev.target.closest('input,select,textarea,button,[contenteditable],.ctrl-body');
+      if (isInteractive) { ev.preventDefault(); return; }
+      dragging = el; el.classList.add('dragging'); ev.dataTransfer.effectAllowed='move'; ev.dataTransfer.setData('text/plain', el.dataset.id);
+    });
+    el.addEventListener('dragend', () => { if (dragging) { dragging.classList.remove('dragging'); dragging = null; } });
+  });
+  canvas.addEventListener('dragover', ev => {
+    if (!dragging) return; ev.preventDefault();
+    const items = [...canvas.querySelectorAll('.item:not(.dragging)')];
+    const after = items.find(x => { const r = x.getBoundingClientRect(); return ev.clientY <= r.top + r.height / 2; });
+    if (after) canvas.insertBefore(dragging, after); else canvas.appendChild(dragging);
+  });
+  canvas.addEventListener('drop', () => {
+    const ids = [...canvas.querySelectorAll('.item')].map(x => x.dataset.id);
+    model.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  });
+}
+
+/* ========= ENVÍO MIDI ========= */
+function sendControl(item, value){
+  const channel = item.ch || ch();
+  if(item.msgMode==='auto'){
+    const cc = item.num ?? allocCC();
+    if(item.kind==='button'){
+      const v = (value===true) ? (item.valHi??127) : (value===false) ? (item.valLo??0) : (value?value:0);
+      transport?.send({type:'cc', ch:channel, cc, val:v});
+    }else{
+      const v = typeof value==='number' ? value : (item.value??64);
+      transport?.send({type:'cc', ch:channel, cc, val:v});
+    }
+  }else{
+    if(item.type==='cc'){
+      const v = (item.kind==='button')
+        ? (value===true ? (item.valHi??127) : (value===false ? (item.valLo??0) : (item.valLo??0)))
+        : (typeof value==='number' ? value : (item.value??64));
+      transport?.send({type:'cc', ch:channel, cc:item.num|0, val:v});
+    }else if(item.type==='pc'){
+      const pv = (typeof value==='number') ? value : (item.num|0);
+      transport?.send({type:'pc', ch:channel, val: pv});
+    }else if(item.type==='note'){
+      if(item.kind==='button'){
+        const on = value===true || (value!==false && value>0);
+        transport?.send({type: on?'noteon':'noteoff', ch:channel, note:item.num|0, vel: on ? (item.valHi??100) : 0});
+      }else{
+        const on = (typeof value==='number' ? value>0 : !!value);
+        transport?.send({type: on?'noteon':'noteoff', ch:channel, note:item.num|0, vel: on ? (item.valHi??100) : 0});
+      }
+    }
+  }
+}
+
+/* ========= MODAL DE PROPIEDADES ========= */
+const modal=document.getElementById('modal');
+const mLabel=document.getElementById('mLabel'), mGroup=document.getElementById('mGroup');
+const mCtrlType=document.getElementById('mCtrlType'), mBtnMode=document.getElementById('mBtnMode'), mBtnModeWrap=document.getElementById('mBtnModeWrap');
+const mMsgMode=document.getElementById('mMsgMode'), mCh=document.getElementById('mCh'), mType=document.getElementById('mType'), mNum=document.getElementById('mNum');
+const mValLo=document.getElementById('mValLo'), mValHi=document.getElementById('mValHi');
+const mCustomRow1=document.getElementById('mCustomRow1'), mCustomRow2=document.getElementById('mCustomRow2');
+const mOk=document.getElementById('mOk'), mCancel=document.getElementById('mCancel'), mDel=document.getElementById('mDel');
+let editingId=null;
+
+function openModal(id){
+  const it=model.find(x=>x.id===id); if(!it) return;
+  editingId=id;
+  mLabel.value=it.label||''; mGroup.value=it.group||'';
+  mCtrlType.value=it.kind; mBtnMode.value=it.mode||'toggle'; mCh.value=it.ch||ch();
+  mMsgMode.value=it.msgMode||'auto'; mType.value=it.type||'cc'; mNum.value=it.num|0; mValLo.value=it.valLo??0; mValHi.value=it.valHi??127;
+  syncModalVisibility(); modal.classList.add('open');
+}
+function syncModalVisibility(){
+  const isBtn = mCtrlType.value==='button';
+  mBtnModeWrap.style.display = isBtn ? '' : 'none';
+  const isAuto = mMsgMode.value==='auto';
+  mCustomRow1.style.display = isAuto ? 'none' : '';
+  mCustomRow2.style.display = isAuto ? 'none' : '';
+  mValLo.parentElement.style.display = ''; mValHi.parentElement.style.display='';
+}
+mCtrlType.onchange=syncModalVisibility; mMsgMode.onchange=syncModalVisibility;
+
+mOk.onclick=()=>{
+  const it=model.find(x=>x.id===editingId); if(!it) return;
+  it.label=mLabel.value||it.label; it.group=mGroup.value||'';
+  it.kind=mCtrlType.value; it.mode=mBtnMode.value;
+  if(it.kind==='button' && it.mode!=='toggle'){ it.state=false; }
+  it.msgMode=mMsgMode.value; it.ch=+mCh.value||ch();
+  if(it.msgMode==='auto'){ it.type='cc'; if(!it.num || it.num<SAFE_CC_START || it.num>SAFE_CC_END) it.num=allocCC(); }
+  else { it.type=mType.value; it.num=+mNum.value||0; }
+  it.valLo=+mValLo.value||0; it.valHi=+mValHi.value||127;
+  modal.classList.remove('open'); render();
+};
+mCancel.onclick=()=>modal.classList.remove('open');
+mDel.onclick=()=>{ model=model.filter(x=>x.id!==editingId); modal.classList.remove('open'); render(); };
+modal.addEventListener('click', (e)=>{ if(e.target===modal) modal.classList.remove('open'); });
+
+/* ========= BOOT ========= */
+(function boot(){
+  // Migración básica desde la clave única vieja si existe
+  try{
+    const legacy = localStorage.getItem('mb_preset');
+    if(legacy){
+      const legacyObj = JSON.parse(legacy);
+      const presets = getPresets();
+      const name = uniqueName('Migrado');
+      presets[name] = { version:2, createdAt: nowIso(), ...legacyObj };
+      setPresets(presets);
+      localStorage.removeItem('mb_preset');
+      localStorage.setItem(LS_ACTIVE_KEY, name);
+    }
+  }catch{}
+  refreshPresetList();
+  const active = localStorage.getItem(LS_ACTIVE_KEY);
+  if(active && getPresets()[active]){
+    applyPreset(getPresets()[active]);
+  }else{
+    // Estado por defecto
+    switchTransport(localStorage.getItem('mb_mode')||'webmidi');
+    render();
+  }
+})();
+</script>
+</body>
+</html>

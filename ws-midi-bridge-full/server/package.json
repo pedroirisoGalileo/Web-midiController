@@ -1,0 +1,20 @@
+{
+  "name": "ws-midi-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "server.js",
+  "license": "MIT",
+  "scripts": {
+    "setup": "npm install",
+    "start": "node server.js --port 8080",
+    "start:virtual": "node server.js --port 8080 --virtual",
+    "start:out:iac": "node server.js --port 8080 --out \"IAC Driver Bus 1\"",
+    "start:token": "WS_TOKEN=secreto node server.js --port 8080 --virtual"
+  },
+  "dependencies": {
+    "easymidi": "^3.1.0",
+    "ws": "^8.18.3",
+    "yargs": "^17.7.2"
+  }
+}
